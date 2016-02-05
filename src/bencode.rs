@@ -1,11 +1,93 @@
 use std::collections::btree_map::BTreeMap;
 use std::string::String;
+use std::slice::Iter;
+use std::char;
 
 pub enum Benc {
     S(String),
     I(i64),
     L(Vec<Benc>),
     D(BTreeMap<String, Benc>)
+}
+
+pub fn dec_benc(s: String) -> Result<Benc, &'static str> {
+    let mut iter = s.as_bytes().iter();
+
+    match iter.next() {
+        Some(c) => {
+            if *c == 'i' as u8 {
+                let i = dec_int(&mut iter);
+                match iter.next() {
+                    Some(_) => return Err("Could not consume whole expression!"),
+                    None => return i
+                }
+            } else {
+                return Err("Got unknown character!");
+            }
+        },
+        None => return Err("Unable to decode empty string!")
+    }
+}
+
+fn dec_int(iter: &mut Iter<u8>) -> Result<Benc, &'static str> {
+    // The integer parser state idicate the set of acceptable characters
+    enum IntParseState {
+        MinusDigit,
+        Term,
+        NonZeroDigit,
+        DigitTerm
+    }
+    let mut state = IntParseState::MinusDigit;
+    let mut accum = String::new();
+
+    while let Some(byte) = iter.next() {
+        let c = try!(char::from_u32(*byte as u32).ok_or("Non-parseable character!"));
+        state = match state {
+            IntParseState::MinusDigit => {
+                match c {
+                    '-' => IntParseState::NonZeroDigit,
+                    '0' => IntParseState::Term,
+                    '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => IntParseState::DigitTerm,
+                    _ => return Err("Expected digit or minus sign!")
+                }
+            },
+            IntParseState::Term => {
+                match c {
+                    'e' =>  {
+                        let parsed = accum.parse::<i64>();
+                        match parsed {
+                            Ok(i) => return Ok(Benc::I(i)),
+                            Err(_) => return Err("Unable to parse given int!")
+                        }
+                    },
+                    _ => return { return Err("Expected digit or minus sign!"); }
+                }
+            },
+            IntParseState::NonZeroDigit => {
+                match c {
+                    '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => IntParseState::DigitTerm,
+                    _ => return Err("Expected a non-zero digit!")
+                }
+            },
+            IntParseState::DigitTerm => {
+                match c {
+                    '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => IntParseState::DigitTerm,
+                    'e' => {
+                        let parsed = accum.parse::<i64>();
+                        match parsed {
+                            Ok(i) => return Ok(Benc::I(i)),
+                            Err(_) => return Err("Unable to parse given int!")
+                        }
+                    },
+                    _ => return Err("Expected a digit or terminal!")
+                }
+            }
+        };
+
+        accum.push(c);
+    }
+
+    return Err("No terminal character while trying to parse int!");
 }
 
 pub fn enc_benc(b: Benc) -> String {
@@ -54,6 +136,76 @@ fn enc_int(i: i64) -> String {
 #[cfg(test)]
 mod test {
     use std::collections::btree_map::BTreeMap;
+
+    #[test]
+    fn dec_int() {
+        // Zero is important!
+        let zero = super::dec_benc("i0e".to_string()).unwrap();
+        match zero {
+            super::Benc::I(i) => { assert_eq!(i, 0); },
+            _ => unreachable!()
+        }
+
+        // A positive number
+        let twelve = super::dec_benc("i12358e".to_string()).unwrap();
+        match twelve {
+            super::Benc::I(i) => { assert_eq!(i, 12358); },
+            _ => unreachable!()
+        }
+
+        // A negative number
+        let negative_thirty_seven = super::dec_benc("i-37e".to_string()).unwrap();
+        match negative_thirty_seven {
+            super::Benc::I(i) => { assert_eq!(i, -37); },
+            _ => unreachable!()
+        }
+
+        // no terminal
+        let error1 = super::dec_benc("i123".to_string());
+        match error1 {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // Non-integer stuff
+        let error2 = super::dec_benc("i123pants78e".to_string());
+        match error2 {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // Doesn't fit in a i64
+        let error3 = super::dec_benc(
+                "i999999999999999999999999999999999999999999999999999999999999999\
+                 9999999999999999999999999999999999999999999999999999999999999999\
+                 9999999999999999999999999999999999999999999999999999999999999999\
+                 9999999999999999999999999999999999999999999999999e".to_string());
+        match error3 {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // No leading 0s
+        let error4 = super::dec_benc("i01e".to_string());
+        match error4 {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // No negative 0
+        let error5 = super::dec_benc("i-0e".to_string());
+        match error5 {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // Negative nothing?
+        let error6 = super::dec_benc("i-e".to_string());
+        match error6 {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+    }
 
     #[test]
     fn benc() {
