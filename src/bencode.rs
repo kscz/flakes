@@ -1,268 +1,176 @@
 use std::collections::btree_map::BTreeMap;
-use std::string::String;
-use std::slice::Iter;
-use std::char;
 
 pub enum Benc {
-    S(String),
+    S(Vec<u8>),
     I(i64),
     L(Vec<Benc>),
     D(BTreeMap<String, Benc>)
 }
 
-pub fn dec_benc(s: String) -> Result<Benc, &'static str> {
-    let mut iter = s.as_bytes().iter();
-
-    match iter.next() {
-        Some(c) => {
-            if *c == 'i' as u8 {
-                let i = dec_int(&mut iter);
-                match iter.next() {
-                    Some(_) => return Err("Could not consume whole expression!"),
-                    None => return i
-                }
-            } else {
-                return Err("Got unknown character!");
-            }
-        },
-        None => return Err("Unable to decode empty string!")
-    }
-}
-
-fn dec_int(iter: &mut Iter<u8>) -> Result<Benc, &'static str> {
-    // The integer parser state idicate the set of acceptable characters
-    enum IntParseState {
-        MinusDigit,
-        Term,
-        NonZeroDigit,
-        DigitTerm
-    }
-    let mut state = IntParseState::MinusDigit;
-    let mut accum = String::new();
-
-    while let Some(byte) = iter.next() {
-        let c = try!(char::from_u32(*byte as u32).ok_or("Non-parseable character!"));
-        state = match state {
-            IntParseState::MinusDigit => {
-                match c {
-                    '-' => IntParseState::NonZeroDigit,
-                    '0' => IntParseState::Term,
-                    '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => IntParseState::DigitTerm,
-                    _ => return Err("Expected digit or minus sign!")
-                }
-            },
-            IntParseState::Term => {
-                match c {
-                    'e' =>  {
-                        let parsed = accum.parse::<i64>();
-                        match parsed {
-                            Ok(i) => return Ok(Benc::I(i)),
-                            Err(_) => return Err("Unable to parse given int!")
-                        }
-                    },
-                    _ => return { return Err("Expected digit or minus sign!"); }
-                }
-            },
-            IntParseState::NonZeroDigit => {
-                match c {
-                    '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => IntParseState::DigitTerm,
-                    _ => return Err("Expected a non-zero digit!")
-                }
-            },
-            IntParseState::DigitTerm => {
-                match c {
-                    '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' => IntParseState::DigitTerm,
-                    'e' => {
-                        let parsed = accum.parse::<i64>();
-                        match parsed {
-                            Ok(i) => return Ok(Benc::I(i)),
-                            Err(_) => return Err("Unable to parse given int!")
-                        }
-                    },
-                    _ => return Err("Expected a digit or terminal!")
-                }
-            }
-        };
-
-        accum.push(c);
-    }
-
-    return Err("No terminal character while trying to parse int!");
-}
-
-pub fn enc_benc(b: Benc) -> String {
+pub fn enc_benc(b: &Benc) -> Vec<u8> {
     match b {
-        Benc::S(s) => enc_string(s),
-        Benc::I(i) => enc_int(i),
-        Benc::L(l) => enc_benc_list(l),
-        Benc::D(d) => enc_benc_dict(d)
+        &Benc::S(ref s) => enc_string(s),
+        &Benc::I(ref i) => enc_int(i),
+        &Benc::L(ref l) => enc_list(l),
+        &Benc::D(ref d) => enc_dict(d),
     }
 }
 
-fn enc_benc_dict(d: BTreeMap<String, Benc>) -> String {
-    let mut benc = "d".to_string();
-    for (k, v) in d {
-        benc.push_str(&enc_string(k));
-        benc.push_str(&enc_benc(v));
+fn enc_string(s: &[u8]) -> Vec<u8> {
+    let size_str = format!("{}:", s.len());
+    let mut out = Vec::with_capacity(size_str.as_bytes().len() + s.len());
+
+    for c in size_str.as_bytes().iter() {
+        out.push(*c);
     }
-    benc.push('e');
-    return benc;
-}
-
-fn enc_benc_list(v: Vec<Benc>) -> String {
-    let mut benc = "l".to_string();
-    for b in v {
-        benc.push_str(&enc_benc(b));
+    for c in s.iter() {
+        out.push(*c);
     }
-    benc.push('e');
-    return benc;
+
+    out
 }
 
-fn enc_string(s: String) -> String {
-    let mut benc = s.len().to_string();
-    benc.push(':');
-    benc.push_str(&s);
-    return benc;
+fn enc_int(i: &i64) -> Vec<u8> {
+    let i_as_str = format!("i{}e", i);
+    let mut out = Vec::with_capacity(i_as_str.as_bytes().len());
+
+    for c in i_as_str.as_bytes().iter() {
+        out.push(*c);
+    }
+
+    out
 }
 
-fn enc_int(i: i64) -> String {
-    let mut benc = "i".to_string();
-    benc.push_str(&i.to_string());
-    benc.push('e');
+fn enc_list(l: &Vec<Benc>) -> Vec<u8> {
+    let mut out = Vec::new();
 
-    return benc;
+    out.push('l' as u8);
+    for b in l {
+        let cur = enc_benc(b);
+        for c in cur {
+            out.push(c);
+        }
+    }
+    out.push('e' as u8);
+
+    out
+}
+
+fn enc_dict(d: &BTreeMap<String, Benc>) -> Vec<u8> {
+    let mut out = Vec::new();
+
+    out.push('d' as u8);
+    for (k, v) in d.iter() {
+        let benc_string = enc_string(k.as_bytes());
+        let benc_value = enc_benc(v);
+        for b in benc_string.iter() {
+            out.push(*b);
+        }
+        for b in benc_value.iter() {
+            out.push(*b);
+        }
+    }
+    out.push('e' as u8);
+
+    out
 }
 
 #[cfg(test)]
 mod test {
     use std::collections::btree_map::BTreeMap;
-
-    #[test]
-    fn dec_int() {
-        // Zero is important!
-        let zero = super::dec_benc("i0e".to_string()).unwrap();
-        match zero {
-            super::Benc::I(i) => { assert_eq!(i, 0); },
-            _ => unreachable!()
-        }
-
-        // A positive number
-        let twelve = super::dec_benc("i12358e".to_string()).unwrap();
-        match twelve {
-            super::Benc::I(i) => { assert_eq!(i, 12358); },
-            _ => unreachable!()
-        }
-
-        // A negative number
-        let negative_thirty_seven = super::dec_benc("i-37e".to_string()).unwrap();
-        match negative_thirty_seven {
-            super::Benc::I(i) => { assert_eq!(i, -37); },
-            _ => unreachable!()
-        }
-
-        // no terminal
-        let error1 = super::dec_benc("i123".to_string());
-        match error1 {
-            Ok(_) => unreachable!(),
-            Err(_) => ()
-        }
-
-        // Non-integer stuff
-        let error2 = super::dec_benc("i123pants78e".to_string());
-        match error2 {
-            Ok(_) => unreachable!(),
-            Err(_) => ()
-        }
-
-        // Doesn't fit in a i64
-        let error3 = super::dec_benc(
-                "i999999999999999999999999999999999999999999999999999999999999999\
-                 9999999999999999999999999999999999999999999999999999999999999999\
-                 9999999999999999999999999999999999999999999999999999999999999999\
-                 9999999999999999999999999999999999999999999999999e".to_string());
-        match error3 {
-            Ok(_) => unreachable!(),
-            Err(_) => ()
-        }
-
-        // No leading 0s
-        let error4 = super::dec_benc("i01e".to_string());
-        match error4 {
-            Ok(_) => unreachable!(),
-            Err(_) => ()
-        }
-
-        // No negative 0
-        let error5 = super::dec_benc("i-0e".to_string());
-        match error5 {
-            Ok(_) => unreachable!(),
-            Err(_) => ()
-        }
-
-        // Negative nothing?
-        let error6 = super::dec_benc("i-e".to_string());
-        match error6 {
-            Ok(_) => unreachable!(),
-            Err(_) => ()
-        }
-    }
-
-    #[test]
-    fn benc() {
-        let i_benc = super::Benc::I(327);
-        let benc_i = super::enc_benc(i_benc);
-
-        assert_eq!(benc_i, "i327e");
-
-        let str_benc = super::Benc::S("pqrs".to_string());
-        let benc_str = super::enc_benc(str_benc);
-
-        assert_eq!(benc_str, "4:pqrs");
-
-        let vec_benc = super::Benc::L(vec![super::Benc::S("a".to_string()), super::Benc::S("bcd".to_string())]);
-        let benc_vec = super::enc_benc(vec_benc);
-
-        assert_eq!(benc_vec, "l1:a3:bcde");
-
-        let mut map = BTreeMap::new();
-        map.insert("peer".to_string(), super::Benc::S("123.45.67.89:6881".to_string()));
-        map.insert("file_a".to_string(), super::Benc::L(vec![super::Benc::S("pic".to_string()), super::Benc::S("neato.jpg".to_string())]));
-        let map_benc = super::Benc::D(map);
-        let benc_map = super::enc_benc(map_benc);
-
-        assert_eq!(benc_map, "d6:file_al3:pic9:neato.jpge4:peer17:123.45.67.89:6881e");
-    }
-
-    #[test]
-    fn integer() {
-        let ben_zero = super::enc_int(0);
-
-        assert_eq!(ben_zero, "i0e");
-
-        let ben_big = super::enc_int(12345678);
-
-        assert_eq!(ben_big, "i12345678e");
-
-        let ben_neg = super::enc_int(-1);
-
-        assert_eq!(ben_neg, "i-1e");
-    }
+    use super::Benc;
 
     #[test]
     fn string() {
-        let short_string = "a".to_string();
-        let ben_short = super::enc_string(short_string);
+        let test_str_1 = "Hello I am a happy moose";
+        assert_eq!(super::enc_string(test_str_1.as_bytes()), "24:Hello I am a happy moose".as_bytes());
 
-        assert_eq!(ben_short, "1:a");
+        // Bleh, this test is a bit heavier than I wanted because getting a str into a Vec is difficult
+        let test_str_2 = "Hello there happy moose";
+        let mut test_vec_2 = Vec::with_capacity(test_str_2.len());
+        for c in test_str_2.as_bytes().iter() {
+            test_vec_2.push(*c);
+        }
+        let test_benc = Benc::S(test_vec_2);
+        assert_eq!(super::enc_benc(&test_benc), "23:Hello there happy moose".as_bytes());
 
-        let med_string = "pqrs".to_string();
-        let ben_med = super::enc_string(med_string);
+        // Test that something with invalid utf8 is still bencodable (0xfe and 0xff are invalid)
+        let test_non_utf8_vec = vec!('a' as u8, 'b' as u8, 'c' as u8, 0xfe, 0xff, 'd' as u8);
 
-        assert_eq!(ben_med, "4:pqrs");
+        assert_eq!(
+                super::enc_string(&test_non_utf8_vec),
+                vec!('6' as u8, ':' as u8, 'a' as u8, 'b' as u8, 'c' as u8, 0xfe, 0xff, 'd' as u8)
+            );
+    }
 
-        let long_string = "I am the very model of a modern major general.".to_string();
-        let ben_long = super::enc_string(long_string);
+    #[test]
+    fn int() {
+        let test_int_1 = 1234;
+        assert_eq!(super::enc_int(&test_int_1), "i1234e".as_bytes());
 
-        assert_eq!(ben_long, "46:I am the very model of a modern major general.");
+        let test_int_2 = 0;
+        assert_eq!(super::enc_int(&test_int_2), "i0e".as_bytes());
+
+        let test_int_3 = -42;
+        assert_eq!(super::enc_int(&test_int_3), "i-42e".as_bytes());
+
+        let test_benc_1 = Benc::I(112358);
+        assert_eq!(super::enc_benc(&test_benc_1), "i112358e".as_bytes());
+    }
+
+    #[test]
+    fn list() {
+        let test_list_ints = vec!(Benc::I(999), Benc::I(-5), Benc::I(0), Benc::I(8675309));
+        assert_eq!(super::enc_list(&test_list_ints), "li999ei-5ei0ei8675309ee".as_bytes());
+
+        let test_list_strings = vec!(
+                Benc::S(vec!('h' as u8, 'a' as u8, 'p' as u8, 'p' as u8, 'y' as u8)),
+                Benc::S(vec!('m' as u8, 'o' as u8, 'o' as u8, 's' as u8, 'e' as u8))
+            );
+        assert_eq!(super::enc_list(&test_list_strings), "l5:happy5:moosee".as_bytes());
+
+        let test_list_mixed = vec!(Benc::I(0xdeadbeef), Benc::S(vec!('w' as u8, 'o' as u8, 'o' as u8, 't' as u8)));
+        assert_eq!(super::enc_list(&test_list_mixed), "li3735928559e4:woote".as_bytes());
+    }
+
+    #[test]
+    fn dict() {
+        // Coming out sorted is a requirement, so insert these in a weird order
+        let mut test_dict_1 = BTreeMap::new();
+        test_dict_1.insert(String::from("number_3"), Benc::I(123456789));
+        assert_eq!(super::enc_dict(&test_dict_1), "d8:number_3i123456789ee".as_bytes());
+        test_dict_1.insert(String::from("number_1"), Benc::I(918273645));
+        assert_eq!(super::enc_dict(&test_dict_1), "d8:number_1i918273645e8:number_3i123456789ee".as_bytes());
+        test_dict_1.insert(String::from("number_2"), Benc::I(987654321));
+        assert_eq!(super::enc_dict(&test_dict_1), "d8:number_1i918273645e8:number_2i987654321e8:number_3i123456789ee".as_bytes());
+
+        // Test strings to strings
+        let mut test_dict_2 = BTreeMap::new();
+        let mut test_str_value_1 = Vec::new();
+        for c in "0xdeadbeefabadbabecafefoodfee1dead".as_bytes().iter() {
+            test_str_value_1.push(*c);
+        }
+        test_dict_2.insert(String::from("hash"), Benc::S(test_str_value_1));
+
+        assert_eq!(super::enc_dict(&test_dict_2), "d4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
+
+        let mut test_str_value_2 = Vec::new();
+        for c in "moose_dance.mkv".as_bytes().iter() {
+            test_str_value_2.push(*c);
+        }
+        test_dict_2.insert(String::from("filename"), Benc::S(test_str_value_2));
+        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
+
+        // Make it a mixed map and see if everything still works
+        test_dict_2.insert(String::from("part_count"), Benc::I(237));
+        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead10:part_counti237ee".as_bytes());
+
+        // Add in a list! ALL THE THINGS!
+        test_dict_2.insert(String::from("other"), Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S(vec!('w' as u8, 'o' as u8, 'o' as u8, 't' as u8)))));
+        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e4:woote10:part_counti237ee".as_bytes());
+
+        // Try it as a benc enum
+        let benc_dict = Benc::D(test_dict_2);
+        assert_eq!(super::enc_benc(&benc_dict), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e4:woote10:part_counti237ee".as_bytes());
     }
 }
