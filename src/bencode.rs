@@ -1,10 +1,81 @@
 use std::collections::btree_map::BTreeMap;
+use std::iter::Peekable;
 
 pub enum Benc {
     S(Vec<u8>),
     I(i64),
     L(Vec<Benc>),
     D(BTreeMap<String, Benc>)
+}
+
+pub fn dec_benc(s: &Vec<u8>) -> Result<Benc, &'static str> {
+    let mut it = s.iter().cloned().peekable();
+    let out = try!(dec_benc_helper(&mut it));
+    match it.next() {
+        None => Ok(out),
+        Some(_) => Err("Unable to consume whole string!")
+    }
+}
+
+fn dec_benc_helper<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+    let next_char = match it.peek() {
+            Some(c) => *c,
+            None => return Err("Unable to decode empty string")
+        };
+
+    if next_char >= ('1' as u8) && next_char <= ('9' as u8) {
+        dec_string(it)
+    } else {
+        Err("Not yet implemented!")
+    }
+}
+
+fn dec_string<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+    enum DecState {
+        ExpectNonZeroNum,
+        ExpectNumOrColon,
+        CountingDown
+    }
+
+    let mut state = DecState::ExpectNonZeroNum;
+    let mut str_len = String::new();
+    let mut bytes_remaining: i32 = 0;
+    let mut out = Vec::new();
+
+    while let Some(c) = it.next() {
+        match state {
+            DecState::ExpectNonZeroNum => {
+                if c >= '1' as u8 && c <= '9' as u8 {
+                    str_len.push(c as char);
+                    state = DecState::ExpectNumOrColon;
+                } else {
+                    return Err("Needed a non-zero number");
+                }
+            },
+            DecState::ExpectNumOrColon => {
+                if c >= '0' as u8 && c <= '9' as u8 {
+                    str_len.push(c as char);
+                } else if c == ':' as u8 {
+                    match str_len.parse::<i32>() {
+                        Ok(i) => bytes_remaining = i,
+                        Err(_) => return Err("Unable to parse string length!")
+                    };
+                    state = DecState::CountingDown;
+                } else {
+                    return Err("Needed a number or colon");
+                }
+            },
+            DecState::CountingDown => {
+                out.push(c);
+                bytes_remaining = bytes_remaining - 1;
+                if bytes_remaining == 0 {
+                    return Ok(Benc::S(out));
+                }
+            }
+        }
+    }
+
+    Err("Not enough characters in string")
 }
 
 pub fn enc_benc(b: &Benc) -> Vec<u8> {
@@ -81,17 +152,44 @@ mod test {
     use super::Benc;
 
     #[test]
+    fn dec_string() {
+        let test_str_1 = "18:Goodbye doomed yam";
+        match super::dec_benc(&test_str_1.as_bytes().to_vec()).unwrap() {
+            Benc::S(s) => assert_eq!(s, "Goodbye doomed yam".as_bytes().to_vec()),
+            _ => unreachable!()
+        };
+
+        let test_str_2 = "1:This is too long";
+        match super::dec_benc(&test_str_2.as_bytes().to_vec()) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_str_3 = "999:This is too short";
+        match super::dec_benc(&test_str_3.as_bytes().to_vec()) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_str_4 = "0:This is impossible";
+        match super::dec_benc(&test_str_4.as_bytes().to_vec()) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_str_5 = "4294967297:This length doesn't fit in an i32 (2^32 + 1)";
+        match super::dec_benc(&test_str_5.as_bytes().to_vec()) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+    }
+
+    #[test]
     fn string() {
         let test_str_1 = "Hello I am a happy moose";
         assert_eq!(super::enc_string(test_str_1.as_bytes()), "24:Hello I am a happy moose".as_bytes());
 
-        // Bleh, this test is a bit heavier than I wanted because getting a str into a Vec is difficult
-        let test_str_2 = "Hello there happy moose";
-        let mut test_vec_2 = Vec::with_capacity(test_str_2.len());
-        for c in test_str_2.as_bytes().iter() {
-            test_vec_2.push(*c);
-        }
-        let test_benc = Benc::S(test_vec_2);
+        let test_benc = Benc::S("Hello there happy moose".as_bytes().to_vec());
         assert_eq!(super::enc_benc(&test_benc), "23:Hello there happy moose".as_bytes());
 
         // Test that something with invalid utf8 is still bencodable (0xfe and 0xff are invalid)
@@ -123,13 +221,10 @@ mod test {
         let test_list_ints = vec!(Benc::I(999), Benc::I(-5), Benc::I(0), Benc::I(8675309));
         assert_eq!(super::enc_list(&test_list_ints), "li999ei-5ei0ei8675309ee".as_bytes());
 
-        let test_list_strings = vec!(
-                Benc::S(vec!('h' as u8, 'a' as u8, 'p' as u8, 'p' as u8, 'y' as u8)),
-                Benc::S(vec!('m' as u8, 'o' as u8, 'o' as u8, 's' as u8, 'e' as u8))
-            );
+        let test_list_strings = vec!(Benc::S("happy".as_bytes().to_vec()), Benc::S("moose".as_bytes().to_vec()));
         assert_eq!(super::enc_list(&test_list_strings), "l5:happy5:moosee".as_bytes());
 
-        let test_list_mixed = vec!(Benc::I(0xdeadbeef), Benc::S(vec!('w' as u8, 'o' as u8, 'o' as u8, 't' as u8)));
+        let test_list_mixed = vec!(Benc::I(0xdeadbeef), Benc::S("woot".as_bytes().to_vec()));
         assert_eq!(super::enc_list(&test_list_mixed), "li3735928559e4:woote".as_bytes());
     }
 
@@ -146,19 +241,11 @@ mod test {
 
         // Test strings to strings
         let mut test_dict_2 = BTreeMap::new();
-        let mut test_str_value_1 = Vec::new();
-        for c in "0xdeadbeefabadbabecafefoodfee1dead".as_bytes().iter() {
-            test_str_value_1.push(*c);
-        }
-        test_dict_2.insert(String::from("hash"), Benc::S(test_str_value_1));
+        test_dict_2.insert(String::from("hash"), Benc::S("0xdeadbeefabadbabecafefoodfee1dead".as_bytes().to_vec()));
 
         assert_eq!(super::enc_dict(&test_dict_2), "d4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
 
-        let mut test_str_value_2 = Vec::new();
-        for c in "moose_dance.mkv".as_bytes().iter() {
-            test_str_value_2.push(*c);
-        }
-        test_dict_2.insert(String::from("filename"), Benc::S(test_str_value_2));
+        test_dict_2.insert(String::from("filename"), Benc::S("moose_dance.mkv".as_bytes().to_vec()));
         assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
 
         // Make it a mixed map and see if everything still works
@@ -166,11 +253,11 @@ mod test {
         assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead10:part_counti237ee".as_bytes());
 
         // Add in a list! ALL THE THINGS!
-        test_dict_2.insert(String::from("other"), Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S(vec!('w' as u8, 'o' as u8, 'o' as u8, 't' as u8)))));
-        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e4:woote10:part_counti237ee".as_bytes());
+        test_dict_2.insert(String::from("other"), Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S("toothless".as_bytes().to_vec()))));
+        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e9:toothlesse10:part_counti237ee".as_bytes());
 
         // Try it as a benc enum
         let benc_dict = Benc::D(test_dict_2);
-        assert_eq!(super::enc_benc(&benc_dict), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e4:woote10:part_counti237ee".as_bytes());
+        assert_eq!(super::enc_benc(&benc_dict), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e9:toothlesse10:part_counti237ee".as_bytes());
     }
 }
