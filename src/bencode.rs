@@ -25,9 +25,82 @@ fn dec_benc_helper<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Ben
 
     if next_char >= ('1' as u8) && next_char <= ('9' as u8) {
         dec_string(it)
+    } else if next_char == 'i' as u8 {
+        dec_int(it)
     } else {
         Err("Not yet implemented!")
     }
+}
+
+fn dec_int<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+    enum DecState {
+        ExpectStart,
+        ExpectNumOrHyphen,
+        ExpectNonZeroNum,
+        ExpectNumOrEnd,
+        ExpectEnd
+    }
+
+    let mut state = DecState::ExpectStart;
+    let mut buffer = String::new();
+
+    while let Some(c) = it.next() {
+        match state {
+            DecState::ExpectStart => {
+                if c == 'i' as u8 {
+                    state = DecState::ExpectNumOrHyphen;
+                } else {
+                    return Err("Expected an 'i' to start integer decoding");
+                }
+            },
+            DecState::ExpectNumOrHyphen => {
+                buffer.push(c as char);
+
+                if c == '0' as u8 {
+                    state = DecState::ExpectEnd;
+                } else if c >= '1' as u8 && c <= '9' as u8 {
+                    state = DecState::ExpectNumOrEnd;
+                } else if c == '-' as u8 {
+                    state = DecState::ExpectNonZeroNum;
+                } else {
+                    return Err("Expected a hyphen or a number, failed to decode int");
+                }
+            },
+            DecState::ExpectNonZeroNum => {
+                buffer.push(c as char);
+
+                if c >= '1' as u8 && c <= '9' as u8 {
+                    state = DecState::ExpectNumOrEnd;
+                } else {
+                    return Err("Expected a non-zero number, failed to decode int");
+                }
+            },
+            DecState::ExpectNumOrEnd => {
+                if c >= '0' as u8 && c <= '9' as u8 {
+                    buffer.push(c as char);
+                } else if c == 'e' as u8 {
+                    match buffer.parse::<i64>() {
+                        Ok(i) => return Ok(Benc::I(i)),
+                        Err(_) => return Err("Unable to parse integer, too large for i64?")
+                    };
+                } else {
+                    return Err("Expected a number or 'e', failed to decode int");
+                }
+            },
+            DecState::ExpectEnd => {
+                if c == 'e' as u8 {
+                    match buffer.parse::<i64>() {
+                        Ok(i) => return Ok(Benc::I(i)),
+                        Err(_) => return Err("Unable to parse integer, too large for i64?")
+                    };
+                } else {
+                    return Err("Expected an 'e', failed to decode int");
+                }
+            }
+        }
+    }
+
+    Err("Ran out of characters, failed to decode int")
 }
 
 fn dec_string<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
@@ -150,6 +223,74 @@ fn enc_dict(d: &BTreeMap<String, Benc>) -> Vec<u8> {
 mod test {
     use std::collections::btree_map::BTreeMap;
     use super::Benc;
+
+    #[test]
+    fn dec_int() {
+        let test_str_1 = "i0e";
+        match super::dec_benc(&test_str_1.as_bytes().to_vec()).unwrap() {
+            Benc::I(i) => assert_eq!(i, 0),
+            _ => unreachable!()
+        }
+
+        let test_str_2 = "i42e";
+        match super::dec_benc(&test_str_2.as_bytes().to_vec()).unwrap() {
+            Benc::I(i) => assert_eq!(i, 42),
+            _ => unreachable!()
+        }
+
+        let test_str_3 = "i-2e";
+        match super::dec_benc(&test_str_3.as_bytes().to_vec()).unwrap() {
+            Benc::I(i) => assert_eq!(i, -2),
+            _ => unreachable!()
+        }
+
+        // Empty decode?
+        let test_str_4 = "ie";
+        match super::dec_benc(&test_str_4.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+
+        // Can't prefix with 0
+        let test_str_5 = "i08e";
+        match super::dec_benc(&test_str_5.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+
+        // negative 0 is not allowed
+        let test_str_6 = "i-0e";
+        match super::dec_benc(&test_str_6.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+
+        let test_str_7 = "i-e";
+        match super::dec_benc(&test_str_7.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+
+        // greater than i64 max?
+        let test_str_8 = "i9223372036854775808e";
+        match super::dec_benc(&test_str_8.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+
+        // less than i64 min?
+        let test_str_9 = "i-9223372036854775809e";
+        match super::dec_benc(&test_str_9.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+
+        let test_str_10 = "i123abc567e";
+        match super::dec_benc(&test_str_10.as_bytes().to_vec()) {
+            Err(_) => (),
+            _ => unreachable!()
+        }
+    }
 
     #[test]
     fn dec_string() {
