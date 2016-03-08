@@ -29,12 +29,14 @@ fn dec_benc_helper<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Ben
         dec_int(it)
     } else if next_char == 'l' as u8 {
         dec_list(it)
+    } else if next_char == 'd' as u8 {
+        Err("Not yet implemented")
     } else {
-        Err("Not yet implemented!")
+        Err("Invalid character received!")
     }
 }
 
-fn dec_list<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+fn dec_list<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
     let mut out = Vec::new();
 
     match it.next() {
@@ -62,7 +64,7 @@ fn dec_list<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'st
     }
 }
 
-fn dec_int<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+fn dec_int<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
     enum DecState {
         ExpectStart,
         ExpectNumOrHyphen,
@@ -133,7 +135,7 @@ fn dec_int<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'sta
     Err("Ran out of characters, failed to decode int")
 }
 
-fn dec_string<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+fn dec_string<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
     enum DecState {
         ExpectNonZeroNum,
         ExpectNumOrColon,
