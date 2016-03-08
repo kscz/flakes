@@ -27,8 +27,38 @@ fn dec_benc_helper<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Ben
         dec_string(it)
     } else if next_char == 'i' as u8 {
         dec_int(it)
+    } else if next_char == 'l' as u8 {
+        dec_list(it)
     } else {
         Err("Not yet implemented!")
+    }
+}
+
+fn dec_list<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+    let mut out = Vec::new();
+
+    match it.next() {
+        Some(c) => {
+            if c != 'l' as u8 {
+                return Err("Expected list to start with a 'l', failed to decode list");
+            }
+        },
+        None => {
+            return Err("Cannot decode empty string as list");
+        }
+    }
+
+    loop {
+        let next_char = match it.peek() {
+            Some(c) => *c,
+            None => return Err("Did not find terminal, failed to decode list")
+        };
+        if next_char == 'e' as u8 {
+            let _ = it.next();
+            return Ok(Benc::L(out));
+        } else {
+            out.push(try!(dec_benc_helper(it)));
+        }
     }
 }
 
@@ -223,6 +253,79 @@ fn enc_dict(d: &BTreeMap<String, Benc>) -> Vec<u8> {
 mod test {
     use std::collections::btree_map::BTreeMap;
     use super::Benc;
+
+    // Make our lives a bit easier by having a Benc comparator
+    fn compare_benc(x: &Benc, y: &Benc) -> bool {
+        match x {
+            &Benc::I(ref xi) => match y {
+                &Benc::I(ref yi) => *xi == *yi,
+                _ => false
+            },
+            &Benc::S(ref xs) => match y {
+                &Benc::S(ref ys) => *xs == *ys,
+                _ => false
+            },
+            &Benc::L(ref xl) => match y {
+                &Benc::L(ref yl) => {
+                    let mut check_iter = xl.iter().zip(yl.iter());
+                    while let Some((x_b, y_b)) = check_iter.next() {
+                        if !compare_benc(x_b, y_b) {
+                            return false;
+                        }
+                    }
+                    true
+                },
+                _ => false
+            },
+            _ => false
+        }
+    }
+
+    #[test]
+    fn dec_list() {
+        let test_list_ints_enc = "li999ei-5ei0ei8675309ee".as_bytes().to_vec();
+        let test_list_ints_dec = Benc::L(vec!(Benc::I(999), Benc::I(-5), Benc::I(0), Benc::I(8675309)));
+        assert!(compare_benc(&super::dec_benc(&test_list_ints_enc).unwrap(), &test_list_ints_dec));
+
+        let test_list_strings_enc = "l5:happy5:moose3:abc7:shuttlee".as_bytes().to_vec();
+        let test_list_strings_dec = Benc::L(vec!(Benc::S("happy".as_bytes().to_vec()), Benc::S("moose".as_bytes().to_vec()),
+                Benc::S("abc".as_bytes().to_vec()), Benc::S("shuttle".as_bytes().to_vec())));
+        assert!(compare_benc(&super::dec_benc(&test_list_strings_enc).unwrap(), &test_list_strings_dec));
+
+        let test_list_mixed_enc = "li3735928559e4:wootli999ei-5ei0ei8675309eee".as_bytes().to_vec();
+        let test_list_mixed_dec = Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S("woot".as_bytes().to_vec()), test_list_ints_dec));
+        assert!(compare_benc(&super::dec_benc(&test_list_mixed_enc).unwrap(), &test_list_mixed_dec));
+
+        let test_unterminated_list = "li999ei-5ei0ei8675309e".as_bytes().to_vec();
+        match super::dec_benc(&test_unterminated_list) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_bad_string_list = "l999:this string is still too short!e".as_bytes().to_vec();
+        match super::dec_benc(&test_bad_string_list) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_bad_int_list = "li08ee".as_bytes().to_vec();
+        match super::dec_benc(&test_bad_int_list) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_bad_item_list = "li0eqe".as_bytes().to_vec();
+        match super::dec_benc(&test_bad_item_list) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+
+        let test_list_list = "lllllllllllllllllllllllllleeeee".as_bytes().to_vec();
+        match super::dec_benc(&test_list_list) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        };
+    }
 
     #[test]
     fn dec_int() {
