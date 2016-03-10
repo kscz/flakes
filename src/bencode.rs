@@ -30,9 +30,55 @@ fn dec_benc_helper<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Ben
     } else if next_char == 'l' as u8 {
         dec_list(it)
     } else if next_char == 'd' as u8 {
-        Err("Not yet implemented")
+        dec_dict(it)
     } else {
         Err("Invalid character received!")
+    }
+}
+
+fn dec_dict<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+    enum DecState {
+        ExpectStart,
+        ExpectStringOrEnd,
+    }
+ 
+    let mut state = DecState::ExpectStart;
+    let mut out = BTreeMap::new();
+
+    loop {
+        let next_char = match it.peek() {
+            Some(c) => *c,
+            None => return Err("Ran out of characters, failed to decode dict")
+        };
+
+        match state {
+            DecState::ExpectStart => {
+                if next_char == 'd' as u8 {
+                    it.next();
+                    state = DecState::ExpectStringOrEnd;
+                } else {
+                    return Err("Expected 'd' as start character, failed to decode dict");
+                }
+            },
+            DecState::ExpectStringOrEnd => {
+                if next_char == 'e' as u8 {
+                    it.next(); // Don't forget to consume the e!
+                    return Ok(Benc::D(out));
+                } else {
+                    let key = match try!(dec_benc_helper(it)) {
+                        Benc::S(s) => s,
+                        _ => return Err("Expected a String key, failed to decode dict")
+                    };
+                    let key = match String::from_utf8(key) {
+                        Ok(s) => s,
+                        Err(_) => return Err("Dict key must be valid utf8 string, failed to decode dict")
+                    };
+                    let value = try!(dec_benc_helper(it));
+
+                    out.insert(key, value);
+                }
+            }
+        }
     }
 }
 
@@ -76,7 +122,7 @@ fn dec_int<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static 
     let mut state = DecState::ExpectStart;
     let mut buffer = String::new();
 
-    while let Some(c) = it.next() {
+    for c in it {
         match state {
             DecState::ExpectStart => {
                 if c == 'i' as u8 {
@@ -147,7 +193,7 @@ fn dec_string<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'stat
     let mut bytes_remaining: i32 = 0;
     let mut out = Vec::new();
 
-    while let Some(c) = it.next() {
+    for c in it {
         match state {
             DecState::ExpectNonZeroNum => {
                 if c >= '1' as u8 && c <= '9' as u8 {
@@ -258,28 +304,81 @@ mod test {
 
     // Make our lives a bit easier by having a Benc comparator
     fn compare_benc(x: &Benc, y: &Benc) -> bool {
-        match x {
-            &Benc::I(ref xi) => match y {
-                &Benc::I(ref yi) => *xi == *yi,
-                _ => false
-            },
-            &Benc::S(ref xs) => match y {
-                &Benc::S(ref ys) => *xs == *ys,
-                _ => false
-            },
-            &Benc::L(ref xl) => match y {
-                &Benc::L(ref yl) => {
-                    let mut check_iter = xl.iter().zip(yl.iter());
-                    while let Some((x_b, y_b)) = check_iter.next() {
-                        if !compare_benc(x_b, y_b) {
-                            return false;
-                        }
+        match (x, y) {
+            (&Benc::I(ref xi), &Benc::I(ref yi)) => *xi == *yi,
+            (&Benc::S(ref xs), &Benc::S(ref ys)) => *xs == *ys,
+            (&Benc::L(ref xl), &Benc::L(ref yl)) => {
+                if xl.len() != yl.len() {
+                    return false;
+                }
+
+                for (x_b, y_b) in xl.iter().zip(yl.iter()) {
+                    if !compare_benc(x_b, y_b) {
+                        return false;
                     }
-                    true
-                },
-                _ => false
+                }
+                true
+            },
+            (&Benc::D(ref xd), &Benc::D(ref yd)) => {
+                if xd.len() != yd.len() {
+                    return false;
+                }
+
+                for ((xk, xv), (yk, yv)) in xd.iter().zip(yd.iter()) {
+                    if xk != yk || !compare_benc(xv, yv) {
+                        return false;
+                    }
+                }
+                true
             },
             _ => false
+        }
+    }
+
+    #[test]
+    fn round_trip_tests() {
+        let test_1 = "d3:abci123e9:今日は23:It means good afternoone".as_bytes().to_vec();
+        assert_eq!(super::enc_benc(&super::dec_benc(&test_1).unwrap()), test_1);
+
+        let test_2 = "li3735928559e4:wootli999ei-5ei0ei8675309eee".as_bytes().to_vec();
+        assert_eq!(super::enc_benc(&super::dec_benc(&test_2).unwrap()), test_2);
+
+        let test_3 = Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S("woot".as_bytes().to_vec())));
+        assert!(compare_benc(&super::dec_benc(&super::enc_benc(&test_3)).unwrap(), &test_3));
+    }
+
+    #[test]
+    fn dec_dict() {
+        // Test with some utf8 stuff to make sure we handle it correctly
+        let test_dict_1_enc = "d3:abci123e9:今日は23:It means good afternoone".as_bytes().to_vec();
+        let mut test_dict_1_dec = BTreeMap::new();
+        test_dict_1_dec.insert(String::from("abc"), Benc::I(123));
+        test_dict_1_dec.insert(String::from("今日は"), Benc::S("It means good afternoon".as_bytes().to_vec()));
+
+        assert!(compare_benc(&super::dec_benc(&test_dict_1_enc).unwrap(), &Benc::D(test_dict_1_dec)));
+
+        // TODO: should probably be exhaustive and include a dict with a nested list and dict
+
+        // Test an invalid utf8 string as a key (otherwise valid)
+        let test_dict_2_enc = vec!('d' as u8, '4' as u8, ':' as u8, 'a' as u8, 0xfe, 0xff, 'd' as u8,
+                'i' as u8, '4' as u8, '2' as u8, 'e' as u8, 'e' as u8);
+        match super::dec_benc(&test_dict_2_enc) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // no terminal e
+        let test_dict_3_enc = "d3:abci123e".as_bytes().to_vec();
+        match super::dec_benc(&test_dict_3_enc) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
+        }
+
+        // non-string key
+        let test_dict_4_enc = "di123e3:abce".as_bytes().to_vec();
+        match super::dec_benc(&test_dict_4_enc) {
+            Ok(_) => unreachable!(),
+            Err(_) => ()
         }
     }
 
