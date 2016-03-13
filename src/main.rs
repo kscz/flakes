@@ -9,10 +9,31 @@ fn print_benc(b: &Benc, pre: &String) -> () {
         &Benc::S(ref s) => {
             match String::from_utf8(s.clone()) {
                 Ok(s) => print!("\"{}\"", s),
-                Err(_) => print!("Binary?")
+                Err(_) => {
+                    print!("<");
+                    let mut it = s.iter();
+                    let mut to_display = 16;
+                    match it.next() {
+                        Some(c) => {
+                            print!("{:#x}", c);
+                            to_display = to_display - 1;
+                        },
+                        None => ()
+                    };
+                    for c in it {
+                        to_display = to_display - 1;
+                        if to_display == 0 {
+                            print!(", ...");
+                            break;
+                        } else {
+                            print!(", {:#x}", c);
+                        }
+                    }
+                    print!(">");
+                }
             };
         },
-        &Benc::I(ref i) => print!("i64:{}", i),
+        &Benc::I(ref i) => print!("{}", i),
         &Benc::L(ref l) => {
             print!("[", );
             let mut it = l.iter();
@@ -48,7 +69,7 @@ fn print_benc(b: &Benc, pre: &String) -> () {
 }
 
 fn main() {
-    let mut f = match File::open("/path/to_your_torrent_file.torrent");
+    let mut f = match File::open("/path/to_your_torrent_file.torrent") {
         Ok(f) => f,
         Err(_) => {
             println!("Gasp! couldn't open a thing!");
