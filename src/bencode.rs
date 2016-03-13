@@ -9,7 +9,12 @@ pub enum Benc {
 }
 
 pub fn dec_benc(s: &Vec<u8>) -> Result<Benc, &'static str> {
-    let mut it = s.iter().cloned().peekable();
+    let mut it = s.iter();
+    dec_benc_it(&mut it)
+}
+
+pub fn dec_benc_it<'a, T: Iterator<Item=&'a u8>>(it: &mut T) -> Result<Benc, &'static str> {
+    let mut it = it.cloned().peekable();
     let out = try!(dec_benc_helper(&mut it));
     match it.next() {
         None => Ok(out),
@@ -17,7 +22,7 @@ pub fn dec_benc(s: &Vec<u8>) -> Result<Benc, &'static str> {
     }
 }
 
-fn dec_benc_helper<'a, T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
+fn dec_benc_helper<T: Iterator<Item=u8>>(it: &mut Peekable<T>) -> Result<Benc, &'static str> {
     let next_char = match it.peek() {
             Some(c) => *c,
             None => return Err("Unable to decode empty string")

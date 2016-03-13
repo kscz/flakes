@@ -1,39 +1,78 @@
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::thread;
+use std::io::prelude::*;
+use std::fs::File;
+use bencode::*;
 
 pub mod bencode;
 
-fn handle_client(stream: TcpStream) {
-    match stream.peer_addr().unwrap() {
-        SocketAddr::V4(ipv4) => {
-            println!("OMG I GOT A CONNECTION! From {}", ipv4);
+fn print_benc(b: &Benc, pre: &String) -> () {
+    match b {
+        &Benc::S(ref s) => {
+            match String::from_utf8(s.clone()) {
+                Ok(s) => print!("\"{}\"", s),
+                Err(_) => print!("Binary?")
+            };
+        },
+        &Benc::I(ref i) => print!("i64:{}", i),
+        &Benc::L(ref l) => {
+            print!("[", );
+            let mut it = l.iter();
+            match it.next() {
+                Some(item) => print_benc(item, pre),
+                None => ()
+            }
+            for item in it {
+                print!(", ");
+                print_benc(item, &pre);
+            }
+            print!("]");
+        },
+        &Benc::D(ref d) => {
+            print!("{}", "{");
+            let mut it = d.iter();
+            match it.next() {
+                Some((k, v)) => {
+                    print!("\n{}\t(\"{}\" : ", pre, k);
+                    print_benc(&v, &format!("{}\t", pre));
+                    print!(")");
+                },
+                None => ()
+            };
+            for (k, v) in it {
+                print!(",\n{}\t(\"{}\" : ", pre, k);
+                print_benc(&v, &format!("{}\t\t", pre));
+                print!(")");
+            }
+            print!("\n{}{}", pre, "}");
         }
-        SocketAddr::V6(ipv6) => {
-            println!("OMG I GOT A CONNECTION! From {}", ipv6);
-        }
-    }
+    };
 }
 
 fn main() {
-    println!("Hello, world!");
+    let mut f = match File::open("/path/to_your_torrent_file.torrent");
+        Ok(f) => f,
+        Err(_) => {
+            println!("Gasp! couldn't open a thing!");
+            return ();
+        }
+    };
+    let mut buffer = Vec::new();
 
-    let listener = TcpListener::bind("127.0.0.1:11234").unwrap();
-
-    // accept connections and process them, spawning a new thread for each one
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                thread::spawn(move|| {
-                        // connection succeeded
-                        handle_client(stream)
-                    });
-            }
-            Err(e) => {
-                println!("We got an error! {}", e);
-            }
+    match f.read_to_end(&mut buffer) {
+        Ok(_) => (),
+        Err(_) => {
+            println!("Oh noes!");
+            return ();
         }
     }
 
-    // close the socket server
-    drop(listener);
+    let torrent = match dec_benc_it(&mut buffer.iter()) {
+        Ok(t) => t,
+        Err(msg) => {
+            println!("Oh noes: {}", msg);
+            return ();
+        }
+    };
+
+    print_benc(&torrent, &String::new());
+    println!("");
 }
