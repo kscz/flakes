@@ -6,9 +6,6 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::process::exit;
 
-use crypto::sha1::Sha1;
-use crypto::digest::Digest;
-
 use bencode::*;
 use torrent::*;
 
@@ -76,37 +73,53 @@ fn print_benc(b: &Benc, pre: &String) -> () {
     };
 }
 
-fn print_torrent_metadata(tm: &torrent_metadata) -> () {
-    let mut alit = tm.announce_list.iter();
-    print!("announce list: [ \"{}\"", alit.next().unwrap());
-    for url in alit {
-        print!(", \"{}\"", url);
+fn print_torrent_metadata(tm: &TorrentMetadata) -> () {
+    println!("announce list: [");
+    for (announce, i) in tm.announce_list.iter().zip((1..)) {
+        print!("\ttier {}: [ ", i);
+        let mut at_it = announce.iter();
+        print!("{}", at_it.next().unwrap());
+        for url in at_it {
+            print!(", \"{}\"", url);
+        }
+        println!(" ], ");
     }
-    println!(" ]");
+    println!("]");
 
     println!("base_path: \"{}\"", tm.base_path);
 
     println!("chunk size: {}", tm.chunk_size);
 
     println!("chunk checksums: [");
-    for checksum in tm.chunk_checksum.iter() {
-        print!("\t0x");
-        for b in checksum.iter() {
-            print!("{:02x}", b);
+    for (checksum, i) in tm.chunk_checksum.iter().zip((0..16)) {
+        if i == 15 {
+            println!("\t...");
+        } else {
+            print!("\tChunk #{}: 0x", i);
+            for b in checksum.iter() {
+                print!("{:02x}", b);
+            }
+            println!(",");
         }
-        println!(",");
     }
     println!("]");
 
-    println!("files:");
+    println!("files: [");
     for file in tm.files.iter() {
         let mut fpiter = file.path.iter();
         print!("\t\"{}", fpiter.next().unwrap());
         for segment in fpiter {
             print!("/{}", segment);
         }
-        println!("\" ({} bytes)", file.length);
+        println!("\" ({} bytes),", file.length);
     }
+    println!("]");
+
+    print!("info hash: 0x");
+    for b in tm.info_hash.iter() {
+        print!("{:02x}", b);
+    }
+    println!("");
 }
 
 fn main() {
@@ -127,14 +140,6 @@ fn main() {
         }
     }
 
-    let mut sha1_hasher = Sha1::new();
-    sha1_hasher.input(&buffer);
-    let mut sha1_sum: [u8; 20] = [0; 20];
-    sha1_hasher.result(&mut sha1_sum);
-    for b in sha1_sum.iter() {
-        print!("{:02x}", b);
-    }
-    println!("");
 
     let torrent = match dec_benc_it(&mut buffer.iter()) {
         Ok(t) => t,
@@ -144,8 +149,8 @@ fn main() {
         }
     };
 
-    print_benc(&torrent, &String::new());
-    println!("");
+    //print_benc(&torrent, &String::new());
+    //println!("");
 
     let fully_parsed = match benc_to_torrent(torrent) {
         Ok(x) => x,
@@ -155,6 +160,5 @@ fn main() {
         }
     };
 
-    println!("Holy cow! Successfully parsed the whole thing!");
     print_torrent_metadata(&fully_parsed);
 }
