@@ -1,6 +1,8 @@
 extern crate crypto;
+extern crate rand;
 mod bencode;
 mod torrent;
+mod id;
 
 use std::fs::File;
 use std::io::prelude::*;
