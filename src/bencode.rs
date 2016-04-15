@@ -305,7 +305,7 @@ fn enc_dict(d: &BTreeMap<String, Benc>) -> Vec<u8> {
 #[cfg(test)]
 mod test {
     use std::collections::btree_map::BTreeMap;
-    use super::Benc;
+    use super::{Benc, dec_benc, enc_benc, enc_int, enc_dict, enc_list, enc_string};
 
     // Make our lives a bit easier by having a Benc comparator
     fn compare_benc(x: &Benc, y: &Benc) -> bool {
@@ -343,13 +343,13 @@ mod test {
     #[test]
     fn round_trip_tests() {
         let test_1 = "d3:abci123e9:今日は23:It means good afternoone".as_bytes().to_vec();
-        assert_eq!(super::enc_benc(&super::dec_benc(&test_1).unwrap()), test_1);
+        assert_eq!(enc_benc(&dec_benc(&test_1).unwrap()), test_1);
 
         let test_2 = "li3735928559e4:wootli999ei-5ei0ei8675309eee".as_bytes().to_vec();
-        assert_eq!(super::enc_benc(&super::dec_benc(&test_2).unwrap()), test_2);
+        assert_eq!(enc_benc(&dec_benc(&test_2).unwrap()), test_2);
 
         let test_3 = Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S("woot".as_bytes().to_vec())));
-        assert!(compare_benc(&super::dec_benc(&super::enc_benc(&test_3)).unwrap(), &test_3));
+        assert!(compare_benc(&dec_benc(&enc_benc(&test_3)).unwrap(), &test_3));
     }
 
     #[test]
@@ -360,28 +360,28 @@ mod test {
         test_dict_1_dec.insert(String::from("abc"), Benc::I(123));
         test_dict_1_dec.insert(String::from("今日は"), Benc::S("It means good afternoon".as_bytes().to_vec()));
 
-        assert!(compare_benc(&super::dec_benc(&test_dict_1_enc).unwrap(), &Benc::D(test_dict_1_dec)));
+        assert!(compare_benc(&dec_benc(&test_dict_1_enc).unwrap(), &Benc::D(test_dict_1_dec)));
 
         // TODO: should probably be exhaustive and include a dict with a nested list and dict
 
         // Test an invalid utf8 string as a key (otherwise valid)
         let test_dict_2_enc = vec!('d' as u8, '4' as u8, ':' as u8, 'a' as u8, 0xfe, 0xff, 'd' as u8,
                 'i' as u8, '4' as u8, '2' as u8, 'e' as u8, 'e' as u8);
-        match super::dec_benc(&test_dict_2_enc) {
+        match dec_benc(&test_dict_2_enc) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         }
 
         // no terminal e
         let test_dict_3_enc = "d3:abci123e".as_bytes().to_vec();
-        match super::dec_benc(&test_dict_3_enc) {
+        match dec_benc(&test_dict_3_enc) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         }
 
         // non-string key
         let test_dict_4_enc = "di123e3:abce".as_bytes().to_vec();
-        match super::dec_benc(&test_dict_4_enc) {
+        match dec_benc(&test_dict_4_enc) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         }
@@ -391,43 +391,43 @@ mod test {
     fn dec_list() {
         let test_list_ints_enc = "li999ei-5ei0ei8675309ee".as_bytes().to_vec();
         let test_list_ints_dec = Benc::L(vec!(Benc::I(999), Benc::I(-5), Benc::I(0), Benc::I(8675309)));
-        assert!(compare_benc(&super::dec_benc(&test_list_ints_enc).unwrap(), &test_list_ints_dec));
+        assert!(compare_benc(&dec_benc(&test_list_ints_enc).unwrap(), &test_list_ints_dec));
 
         let test_list_strings_enc = "l5:happy5:moose3:abc7:shuttlee".as_bytes().to_vec();
         let test_list_strings_dec = Benc::L(vec!(Benc::S("happy".as_bytes().to_vec()), Benc::S("moose".as_bytes().to_vec()),
                 Benc::S("abc".as_bytes().to_vec()), Benc::S("shuttle".as_bytes().to_vec())));
-        assert!(compare_benc(&super::dec_benc(&test_list_strings_enc).unwrap(), &test_list_strings_dec));
+        assert!(compare_benc(&dec_benc(&test_list_strings_enc).unwrap(), &test_list_strings_dec));
 
         let test_list_mixed_enc = "li3735928559e4:wootli999ei-5ei0ei8675309eee".as_bytes().to_vec();
         let test_list_mixed_dec = Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S("woot".as_bytes().to_vec()), test_list_ints_dec));
-        assert!(compare_benc(&super::dec_benc(&test_list_mixed_enc).unwrap(), &test_list_mixed_dec));
+        assert!(compare_benc(&dec_benc(&test_list_mixed_enc).unwrap(), &test_list_mixed_dec));
 
         let test_unterminated_list = "li999ei-5ei0ei8675309e".as_bytes().to_vec();
-        match super::dec_benc(&test_unterminated_list) {
+        match dec_benc(&test_unterminated_list) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_bad_string_list = "l999:this string is still too short!e".as_bytes().to_vec();
-        match super::dec_benc(&test_bad_string_list) {
+        match dec_benc(&test_bad_string_list) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_bad_int_list = "li08ee".as_bytes().to_vec();
-        match super::dec_benc(&test_bad_int_list) {
+        match dec_benc(&test_bad_int_list) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_bad_item_list = "li0eqe".as_bytes().to_vec();
-        match super::dec_benc(&test_bad_item_list) {
+        match dec_benc(&test_bad_item_list) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_list_list = "lllllllllllllllllllllllllleeeee".as_bytes().to_vec();
-        match super::dec_benc(&test_list_list) {
+        match dec_benc(&test_list_list) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
@@ -436,66 +436,66 @@ mod test {
     #[test]
     fn dec_int() {
         let test_str_1 = "i0e";
-        match super::dec_benc(&test_str_1.as_bytes().to_vec()).unwrap() {
+        match dec_benc(&test_str_1.as_bytes().to_vec()).unwrap() {
             Benc::I(i) => assert_eq!(i, 0),
             _ => unreachable!()
         }
 
         let test_str_2 = "i42e";
-        match super::dec_benc(&test_str_2.as_bytes().to_vec()).unwrap() {
+        match dec_benc(&test_str_2.as_bytes().to_vec()).unwrap() {
             Benc::I(i) => assert_eq!(i, 42),
             _ => unreachable!()
         }
 
         let test_str_3 = "i-2e";
-        match super::dec_benc(&test_str_3.as_bytes().to_vec()).unwrap() {
+        match dec_benc(&test_str_3.as_bytes().to_vec()).unwrap() {
             Benc::I(i) => assert_eq!(i, -2),
             _ => unreachable!()
         }
 
         // Empty decode?
         let test_str_4 = "ie";
-        match super::dec_benc(&test_str_4.as_bytes().to_vec()) {
+        match dec_benc(&test_str_4.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
 
         // Can't prefix with 0
         let test_str_5 = "i08e";
-        match super::dec_benc(&test_str_5.as_bytes().to_vec()) {
+        match dec_benc(&test_str_5.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
 
         // negative 0 is not allowed
         let test_str_6 = "i-0e";
-        match super::dec_benc(&test_str_6.as_bytes().to_vec()) {
+        match dec_benc(&test_str_6.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
 
         let test_str_7 = "i-e";
-        match super::dec_benc(&test_str_7.as_bytes().to_vec()) {
+        match dec_benc(&test_str_7.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
 
         // greater than i64 max?
         let test_str_8 = "i9223372036854775808e";
-        match super::dec_benc(&test_str_8.as_bytes().to_vec()) {
+        match dec_benc(&test_str_8.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
 
         // less than i64 min?
         let test_str_9 = "i-9223372036854775809e";
-        match super::dec_benc(&test_str_9.as_bytes().to_vec()) {
+        match dec_benc(&test_str_9.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
 
         let test_str_10 = "i123abc567e";
-        match super::dec_benc(&test_str_10.as_bytes().to_vec()) {
+        match dec_benc(&test_str_10.as_bytes().to_vec()) {
             Err(_) => (),
             _ => unreachable!()
         }
@@ -504,31 +504,31 @@ mod test {
     #[test]
     fn dec_string() {
         let test_str_1 = "18:Goodbye doomed yam";
-        match super::dec_benc(&test_str_1.as_bytes().to_vec()).unwrap() {
+        match dec_benc(&test_str_1.as_bytes().to_vec()).unwrap() {
             Benc::S(s) => assert_eq!(s, "Goodbye doomed yam".as_bytes().to_vec()),
             _ => unreachable!()
         };
 
         let test_str_2 = "1:This is too long";
-        match super::dec_benc(&test_str_2.as_bytes().to_vec()) {
+        match dec_benc(&test_str_2.as_bytes().to_vec()) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_str_3 = "999:This is too short";
-        match super::dec_benc(&test_str_3.as_bytes().to_vec()) {
+        match dec_benc(&test_str_3.as_bytes().to_vec()) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_str_4 = "0:This is impossible";
-        match super::dec_benc(&test_str_4.as_bytes().to_vec()) {
+        match dec_benc(&test_str_4.as_bytes().to_vec()) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
 
         let test_str_5 = "4294967297:This length doesn't fit in an i32 (2^32 + 1)";
-        match super::dec_benc(&test_str_5.as_bytes().to_vec()) {
+        match dec_benc(&test_str_5.as_bytes().to_vec()) {
             Ok(_) => unreachable!(),
             Err(_) => ()
         };
@@ -537,16 +537,16 @@ mod test {
     #[test]
     fn string() {
         let test_str_1 = "Hello I am a happy moose";
-        assert_eq!(super::enc_string(test_str_1.as_bytes()), "24:Hello I am a happy moose".as_bytes());
+        assert_eq!(enc_string(test_str_1.as_bytes()), "24:Hello I am a happy moose".as_bytes());
 
         let test_benc = Benc::S("Hello there happy moose".as_bytes().to_vec());
-        assert_eq!(super::enc_benc(&test_benc), "23:Hello there happy moose".as_bytes());
+        assert_eq!(enc_benc(&test_benc), "23:Hello there happy moose".as_bytes());
 
         // Test that something with invalid utf8 is still bencodable (0xfe and 0xff are invalid)
         let test_non_utf8_vec = vec!('a' as u8, 'b' as u8, 'c' as u8, 0xfe, 0xff, 'd' as u8);
 
         assert_eq!(
-                super::enc_string(&test_non_utf8_vec),
+                enc_string(&test_non_utf8_vec),
                 vec!('6' as u8, ':' as u8, 'a' as u8, 'b' as u8, 'c' as u8, 0xfe, 0xff, 'd' as u8)
             );
     }
@@ -554,28 +554,28 @@ mod test {
     #[test]
     fn int() {
         let test_int_1 = 1234;
-        assert_eq!(super::enc_int(&test_int_1), "i1234e".as_bytes());
+        assert_eq!(enc_int(&test_int_1), "i1234e".as_bytes());
 
         let test_int_2 = 0;
-        assert_eq!(super::enc_int(&test_int_2), "i0e".as_bytes());
+        assert_eq!(enc_int(&test_int_2), "i0e".as_bytes());
 
         let test_int_3 = -42;
-        assert_eq!(super::enc_int(&test_int_3), "i-42e".as_bytes());
+        assert_eq!(enc_int(&test_int_3), "i-42e".as_bytes());
 
         let test_benc_1 = Benc::I(112358);
-        assert_eq!(super::enc_benc(&test_benc_1), "i112358e".as_bytes());
+        assert_eq!(enc_benc(&test_benc_1), "i112358e".as_bytes());
     }
 
     #[test]
     fn list() {
         let test_list_ints = vec!(Benc::I(999), Benc::I(-5), Benc::I(0), Benc::I(8675309));
-        assert_eq!(super::enc_list(&test_list_ints), "li999ei-5ei0ei8675309ee".as_bytes());
+        assert_eq!(enc_list(&test_list_ints), "li999ei-5ei0ei8675309ee".as_bytes());
 
         let test_list_strings = vec!(Benc::S("happy".as_bytes().to_vec()), Benc::S("moose".as_bytes().to_vec()));
-        assert_eq!(super::enc_list(&test_list_strings), "l5:happy5:moosee".as_bytes());
+        assert_eq!(enc_list(&test_list_strings), "l5:happy5:moosee".as_bytes());
 
         let test_list_mixed = vec!(Benc::I(0xdeadbeef), Benc::S("woot".as_bytes().to_vec()));
-        assert_eq!(super::enc_list(&test_list_mixed), "li3735928559e4:woote".as_bytes());
+        assert_eq!(enc_list(&test_list_mixed), "li3735928559e4:woote".as_bytes());
     }
 
     #[test]
@@ -583,31 +583,31 @@ mod test {
         // Coming out sorted is a requirement, so insert these in a weird order
         let mut test_dict_1 = BTreeMap::new();
         test_dict_1.insert(String::from("number_3"), Benc::I(123456789));
-        assert_eq!(super::enc_dict(&test_dict_1), "d8:number_3i123456789ee".as_bytes());
+        assert_eq!(enc_dict(&test_dict_1), "d8:number_3i123456789ee".as_bytes());
         test_dict_1.insert(String::from("number_1"), Benc::I(918273645));
-        assert_eq!(super::enc_dict(&test_dict_1), "d8:number_1i918273645e8:number_3i123456789ee".as_bytes());
+        assert_eq!(enc_dict(&test_dict_1), "d8:number_1i918273645e8:number_3i123456789ee".as_bytes());
         test_dict_1.insert(String::from("number_2"), Benc::I(987654321));
-        assert_eq!(super::enc_dict(&test_dict_1), "d8:number_1i918273645e8:number_2i987654321e8:number_3i123456789ee".as_bytes());
+        assert_eq!(enc_dict(&test_dict_1), "d8:number_1i918273645e8:number_2i987654321e8:number_3i123456789ee".as_bytes());
 
         // Test strings to strings
         let mut test_dict_2 = BTreeMap::new();
         test_dict_2.insert(String::from("hash"), Benc::S("0xdeadbeefabadbabecafefoodfee1dead".as_bytes().to_vec()));
 
-        assert_eq!(super::enc_dict(&test_dict_2), "d4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
+        assert_eq!(enc_dict(&test_dict_2), "d4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
 
         test_dict_2.insert(String::from("filename"), Benc::S("moose_dance.mkv".as_bytes().to_vec()));
-        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
+        assert_eq!(enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1deade".as_bytes());
 
         // Make it a mixed map and see if everything still works
         test_dict_2.insert(String::from("part_count"), Benc::I(237));
-        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead10:part_counti237ee".as_bytes());
+        assert_eq!(enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead10:part_counti237ee".as_bytes());
 
         // Add in a list! ALL THE THINGS!
         test_dict_2.insert(String::from("other"), Benc::L(vec!(Benc::I(0xdeadbeef), Benc::S("toothless".as_bytes().to_vec()))));
-        assert_eq!(super::enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e9:toothlesse10:part_counti237ee".as_bytes());
+        assert_eq!(enc_dict(&test_dict_2), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e9:toothlesse10:part_counti237ee".as_bytes());
 
         // Try it as a benc enum
         let benc_dict = Benc::D(test_dict_2);
-        assert_eq!(super::enc_benc(&benc_dict), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e9:toothlesse10:part_counti237ee".as_bytes());
+        assert_eq!(enc_benc(&benc_dict), "d8:filename15:moose_dance.mkv4:hash34:0xdeadbeefabadbabecafefoodfee1dead5:otherli3735928559e9:toothlesse10:part_counti237ee".as_bytes());
     }
 }
