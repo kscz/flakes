@@ -122,6 +122,13 @@ fn print_torrent_metadata(tm: &TorrentMetadata) -> () {
         print!("{:02x}", b);
     }
     println!("");
+
+    match tm.creation_date {
+        Some(x) => {
+            println!("Torrent creation date: {}", x);
+        },
+        None => ()
+    }
 }
 
 fn main() {

@@ -12,12 +12,12 @@ pub struct TorrentFile {
 
 pub struct TorrentMetadata {
     pub announce_list: Vec<Vec<String>>,
-    pub file_metadata: BTreeMap<String, String>,
     pub base_path: String,
     pub chunk_size: i64,
     pub chunk_checksum: Vec<[u8; 20]>,
     pub files: Vec<TorrentFile>,
-    pub info_hash: [u8; 20]
+    pub info_hash: [u8; 20],
+    pub creation_date: Option<i64>
 }
 
 pub fn benc_to_torrent(input: Benc) -> Result<TorrentMetadata, String> {
@@ -35,23 +35,31 @@ pub fn benc_to_torrent(input: Benc) -> Result<TorrentMetadata, String> {
     let chunk_checksum = try!(extract_checksums(info));
     let announce = try!(extract_announce(d));
 
-    // Fields which might exist
-    let files = extract_files(info);
-    let single_file_length = extract_single_file_length(info);
-    let announce_list = extract_announce_list(d);
+    // Fields which might exist in the info dict
+    let files = try!(extract_files(info));
+    let single_file_length = try!(extract_single_file_length(info));
+    // let private = ... "private" // TODO: implement me!
+    // let md5sum = ... "md5sum" // TODO: implement me!
+
+    // Fields which might exist in the torrent dict
+    let announce_list = try!(extract_announce_list(d));
+    let creation_date = try!(extract_creation_date(d));
+    // let comment = ... "comment" // TODO: implement me!
+    // let created_by = ... "created by" // TODO: implement me!
+    // let encoding = ... "encoding" // TODO: implement me!
 
     // Resolve single-file vs multi-file ambiguity:
     let (files, base_path) = match (files, single_file_length) {
-        (Ok(_), Ok(_)) => {
+        (Some(_), Some(_)) => {
             return Err(String::from("Cannot have both a 'length' field and a 'files' field defined!"));
         },
-        (Ok(files), Err(_)) => {
+        (Some(files), None) => {
             (files, name)
         },
-        (Err(_), Ok(length)) => {
+        (None, Some(length)) => {
             (vec![TorrentFile {path: vec![name], length: length}], String::from("."))
         },
-        (Err(_), Err(_)) => {
+        (None, None) => {
             return Err(String::from("Need a length or a files field! Cannot be missing both!"));
         }
     };
@@ -65,13 +73,7 @@ pub fn benc_to_torrent(input: Benc) -> Result<TorrentMetadata, String> {
     }
 
     // Resolve announce ambiguity
-    let announce_list = match announce_list {
-        Ok(x) => x,
-        Err(e) => {
-            println!("{}", e);
-            vec![vec![announce]]
-        }
-    };
+    let announce_list = announce_list.unwrap_or(vec![vec![announce]]);
 
     // Generate the info hash
     let mut sha1_hasher = Sha1::new();
@@ -82,19 +84,32 @@ pub fn benc_to_torrent(input: Benc) -> Result<TorrentMetadata, String> {
     // Everything should be all nice and unambiguous now! Return stuff!
     Ok(TorrentMetadata {
         announce_list: announce_list,
-        file_metadata: BTreeMap::new(), // TODO: Actually parse these fields
         base_path: base_path,
         chunk_size: chunk_size,
         chunk_checksum: chunk_checksum,
         files: files,
-        info_hash: sha1_sum
+        info_hash: sha1_sum,
+        creation_date: creation_date
     })
 }
 
-fn extract_announce_list(d: &BTreeMap<String, Benc>) -> Result<Vec<Vec<String>>, String> {
+fn extract_creation_date(d: &BTreeMap<String, Benc>) -> Result<Option<i64>, String> {
+    let creation_date_benc = match d.get("creation date") {
+        Some(cd) => cd,
+        None => { return Ok(None); }
+    };
+
+    match creation_date_benc {
+        &Benc::I(cd) => Ok(Some(cd)),
+        _ => Err(String::from("Value for key 'creation date' is not an integer!"))
+    }
+
+}
+
+fn extract_announce_list(d: &BTreeMap<String, Benc>) -> Result<Option<Vec<Vec<String>>>, String> {
     let announce_list_benc = match d.get("announce-list") {
         Some(al) => al,
-        None => { return Err(String::from("No key 'announce-list' in torrent file!")); }
+        None => { return Ok(None); }
     };
 
     let announce_list = match announce_list_benc {
@@ -131,22 +146,22 @@ fn extract_announce_list(d: &BTreeMap<String, Benc>) -> Result<Vec<Vec<String>>,
     }
 
     if out.len() > 0 {
-        Ok(out)
+        Ok(Some(out))
     } else {
         Err(String::from("Cannot have an empty announce list!"))
     }
 }
 
-fn extract_single_file_length(info: &BTreeMap<String, Benc>) -> Result<i64, String> {
+fn extract_single_file_length(info: &BTreeMap<String, Benc>) -> Result<Option<i64>, String> {
     let length_benc = match info.get("length") {
         Some(length) => length,
-        None => { return Err(String::from("No field with key 'length'")); }
+        None => { return Ok(None); }
     };
 
     match length_benc {
         &Benc::I(i) => {
             if i > 0 {
-                Ok(i)
+                Ok(Some(i))
             } else {
                 Err(format!("Got an invalid single-file length: {}", i))
             }
@@ -155,10 +170,10 @@ fn extract_single_file_length(info: &BTreeMap<String, Benc>) -> Result<i64, Stri
     }
 }
 
-fn extract_files(info: &BTreeMap<String, Benc>) -> Result<Vec<TorrentFile>, String> {
+fn extract_files(info: &BTreeMap<String, Benc>) -> Result<Option<Vec<TorrentFile>>, String> {
     let files_benc = match info.get("files") {
         Some(files) => files,
-        None => { return Err(String::from("No field with key 'files' in torrent file!")); }
+        None => { return Ok(None); }
     };
 
     let files = match files_benc {
@@ -185,6 +200,9 @@ fn extract_files(info: &BTreeMap<String, Benc>) -> Result<Vec<TorrentFile>, Stri
                 "length" => {
                     length = Ok(v);
                 },
+                "md5sum" => {
+                    // FIXME: we sometimes get md5sums, we should propagate them up
+                },
                 _ => { return Err(format!("Got unexpected field \"{}\" while parsing files!", k)); }
             }
         }
@@ -208,7 +226,7 @@ fn extract_files(info: &BTreeMap<String, Benc>) -> Result<Vec<TorrentFile>, Stri
         out.push(TorrentFile {path: path, length: length});
     }
 
-    Ok(out)
+    Ok(Some(out))
 }
 
 fn extract_path(path_benc: &Vec<Benc>) -> Result<Vec<String>, String> {
